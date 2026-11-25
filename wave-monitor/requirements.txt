@@ -1,0 +1,7 @@
+# Python 3.13.12 实测通过；锁版本避免 akshare 接口/列名漂移
+akshare==1.20.65
+pandas==2.3.3
+PyYAML==6.0.3
+python-dotenv==1.2.1
+tenacity==9.1.4
+requests==2.34.2
