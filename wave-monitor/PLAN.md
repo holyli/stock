@@ -7,7 +7,7 @@
 用户已拍板的四项决定：
 
 1. **系数**：数学上只有 `rho = k2/k1` 有效（等价 `MA7/MA13` 穿越阈值），做成可调参数 + 截图标定值（日线 1.001、60 分钟 1.000），支持按周期覆盖
-2. **周期**：60分钟与日线**两个都算、分别推送**；日线状态作为 60 分钟消息的二次确认标签
+2. **周期**：60分钟与日线**两个都算、分别推送**，且彻底分离（60 分钟轮次不取日线，日线轮次不取 60 分钟）
 3. **标的**：多只自选股，从配置文件读取（用户填清单，代码不硬编码）
 4. **推送**：企业微信群机器人 webhook（markdown 消息）
 
@@ -39,7 +39,7 @@
 - `general`: `timezone: Asia/Shanghai`、`log_level`、`dry_run`（调参期先 true）
 - `fetch`: 串行间隔 0.8s、重试 3 次、退避 [1,3,8]s、`history_bars: 120`
 - `indicator`: `rho: 1.000` + `rho_by_period: {m60: 1.000, daily: 1.000}`；`hold_rule`（`require_bullish_candle: true`、`turnover_threshold_60m: 1.0` 推测、`turnover_threshold_daily: 0.5` 标定）——状态机见 `indicator.py` 模块注释
-- `periods`: `m60.enabled/push: true`、`daily.enabled/push: true`、`use_as_confirm: true`
+- `periods`: `m60.enabled/push: true`、`daily.enabled/push: true`（`use_as_confirm` 已删除）
 - `dedup`: `merge_cross_period: false`（严格分别推送）、`key_by_bar_time: true`
 - `notify`: `webhook_key_env: WECOM_WEBHOOK_KEY`（只存变量名）、`max_per_minute: 15`
 - `symbols`: 用户填列表 `- {code: "300750", name: "宁德时代"}`，先用占位示例，清单由用户最终填入
@@ -73,7 +73,7 @@ sell  = cross_down
 
 - 企微 webhook：`POST https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=KEY`，body `{"msgtype":"markdown","markdown":{"content":...}}`，校验 `errcode==0`；颜色 info绿/comment灰/warning红；滑动窗口限 15 条/分。
 - 消息内容：标的代码名称、周期、买/卖点、触发价、MA7/MA13 与系数值、换手率、持有/观望状态、日线确认标签、时间、风险提示。
-- launchd `StartCalendarInterval` 五时点：**10:33 / 11:33 / 14:03 / 15:05（60分钟收线后延迟）+ 15:10（日线）**；Python 与脚本均绝对路径；webhook key 从 `~/.env` 读，不写进 plist。
+- launchd `StartCalendarInterval`：**10:33 / 11:33 / 14:03 / 15:05 / 15:10 只跑 60 分钟**，另有 **18:30 单独跑日线**；Python 与脚本均绝对路径；webhook key 从 `~/.env` 读，不写进 plist。
 - 单次流程：加载配置 → 交易日判断（非交易日跳过）→ 逐标的逐周期：拉数 → 列名适配 → **闭合校验**（最后一根 time∈{10:30,11:30,14:00,15:00} 且成交量稳定，否则跳过/用上一根）→ 算信号 → 去重 → 推送 → 写状态与日志。单标的失败不影响其他，失败汇总告警。
 
 ## 六、调参与验证

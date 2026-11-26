@@ -4,12 +4,19 @@
 general:
   timezone: Asia/Shanghai
   log_level: INFO
-  dry_run: true   # 调参期保持 true；确认无误后改为 false 才会真实推送
+  dry_run: false  # 2026-11-25 已用 --live 验证 webhook 连通，切为实盘推送
+  lock_wait_seconds: 300  # 同一时刻只允许一个扫描进程；后到的先等前一轮跑完再继续
 
 fetch:
-  use_westock: true             # 优先本机 westock CLI，避免东财 push2 限流
+  use_westock: true             # 只走本机 westock CLI
+  fallback_to_akshare: false    # 关闭 akshare/东财降级：拿不到就跳过本轮
+                                # 原因：17 只标的时降级会把东财 IP 打到限流，
+                                # 反而让后面 20 多个标的全部失败
   westock_cli: ~/.local/bin/westock
-  interval_seconds: 0.8
+  # 限频来自上游服务端（腾讯行情 / 东财）按 IP + 接口的滑动窗口与并发频控，
+  # 不是 westock 本地配额。因此降请求量的手段是「合并 + 复用缓存」，而不是增大间隔。
+  batch_size: 20          # 单条命令最多拼多少只代码：17 只 = 1 次请求（原来 17 次）
+  interval_seconds: 2.0   # 仅约束批次之间的间隔；批量后每轮只有 1~2 次请求
   retries: 3
   backoff_seconds: [1, 3, 8]
   history_bars: 120
@@ -30,10 +37,10 @@ indicator:
                                 # （lead 0.3 + shift → 精度 55.7；lead 0 + shift → 56.5）
   turnover_rel_min: 1.0         # 相对换手门：换手 >= 1.00 × 近 20 根中位，买/卖两侧都卡
                                 # 绝对换手门跨标的不可比（宁德 60m 单根 0.07% vs 光线 0.7%）
-  signal_shift: -1              # 信号位置整体平移（根）：-1 = 买卖点全部提前一根
-                                # 真值同根命中率 6% → 46%，中位偏移 -1 → 0
-                                # ⚠ 这是「标注对齐」，不是「更早算出」：实盘/回测用它
-                                # 等于提前一根使用未来信息，只用于复盘与同花顺画图对齐
+  signal_shift: 0               # 信号位置整体平移（根）：0 = 不平移（实盘口径）
+                                # 复盘画图对齐同花顺时临时改成 -1（同根命中 6%→46%）
+                                # ⚠ 实盘必须为 0：-1 等于提前一根使用未来信息，
+                                #   且会让推送的触发时间与去重键指向前一根
   skip_buy_after_sell: true     # 丢弃「前一根是卖点」的买点（先平移再判断）
                                 # 压制震荡区卖完立刻回买的横跳：信号 66→62、精度 56.1→56.5
   rho_by_period:                # 按周期覆盖；删掉某项即用上面的默认 rho
@@ -48,13 +55,16 @@ indicator:
     turnover_threshold_daily: 0.5 # 日线随 rho 一起标定；1.5%~2% 会漏掉多数买点
 
 periods:
+  # 日线与 60 分钟彻底分离；定时全部由 WorkBuddy automation 驱动（不使用 launchd）：
+  #   60 分钟：交易日 10:33 / 11:33 / 14:03 / 16:35
+  #   日线    ：交易日 18:30
+  #   两轮各自只取自己周期的行情，不再互相带取（原 use_as_confirm 日线确认已删除）
   m60:
     enabled: true
     push: true
   daily:
-    enabled: true
+    enabled: true       # 日线买卖点独立监测，18:30 单独一轮
     push: true
-  use_as_confirm: true  # 60 分钟消息附带日线状态标签
 
 dedup:
   merge_cross_period: false   # false = 两个周期严格分别推送
@@ -66,5 +76,42 @@ notify:
 
 # 自选股清单：把下面的示例替换成你自己的标的
 symbols:
+  # 港股（必须显式 hk 前缀；恒指相关标的收盘 16:00，晚于 A 股）
+  - code: "hk00700"
+    name: "腾讯集团"
+  - code: "hk00772"
+    name: "阅文集团"
+  - code: "hk01810"
+    name: "小米集团-W"
+  # A 股 · 沪市
+  - code: "601318"
+    name: "中国平安"
+  - code: "601899"
+    name: "紫金矿业"
+  - code: "601012"
+    name: "隆基绿能"
+  - code: "603259"
+    name: "药明康德"
+  # A 股 · 深市
+  - code: "000333"
+    name: "美的集团"
+  - code: "001337"
+    name: "四川黄金"
+  - code: "300251"
+    name: "光线传媒"
+  - code: "300308"
+    name: "中际旭创"
   - code: "300750"
     name: "宁德时代"
+  - code: "302132"
+    name: "中航成飞"
+  # A 股 · 科创板
+  - code: "688256"
+    name: "寒武纪"
+  - code: "688836"
+    name: "宇树科技"
+  # ETF（5 开头走上交所，159 开头走深交所）
+  - code: "159530"
+    name: "机器人ETF易方达"
+  - code: "513180"
+    name: "恒生科技ETF"

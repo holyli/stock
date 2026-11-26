@@ -61,8 +61,14 @@ def signals(d, lead=0.0, thr=0.0, rel=0.0, amp=0.0):
     return keep
 
 
-def evaluate(data, shift=0, drop_buy_after_sell=False, **kw):
-    """shift: 信号整体平移的根数（-1=提前一根）；drop_buy_after_sell: 丢弃前一根是卖点的买点。"""
+def evaluate(data, shift=0, drop_buy_after_sell=False,
+             min_close_pos=None, require_bull=False, min_cross_pct=None, **kw):
+    """shift: 信号整体平移的根数（-1=提前一根）；drop_buy_after_sell: 丢弃前一根是卖点的买点。
+
+    min_close_pos: 买点当根「收盘价在振幅中的位置」下限，(close-low)/(high-low)。
+                   None=不过滤；0.5=收盘在上半区。只作用于买点，卖点不动。
+    require_bull:  买点要求收阳（close>open）。同样只作用于买点。
+    """
     tot = dict(n=0, hit=0, nt=0, ht=0)
     per = {}
     for key, d in data.items():
@@ -74,6 +80,26 @@ def evaluate(data, shift=0, drop_buy_after_sell=False, **kw):
         if drop_buy_after_sell:
             sells = {i for i, sd in sig if sd == -1}
             sig = [(i, sd) for i, sd in sig if not (sd == 1 and (i - 1) in sells)]
+        if min_cross_pct is not None:
+            df = d["df"]
+            sig = [(i, sd) for i, sd in sig
+                   if sd != 1 or (float(df["ma7"].iloc[i]) and
+                                  (float(df["close"].iloc[i]) / float(df["ma7"].iloc[i]) - 1) * 100 >= min_cross_pct)]
+        if min_close_pos is not None or require_bull:
+            df = d["df"]
+            kept = []
+            for i, sd in sig:
+                if sd == 1:
+                    o, c = float(df["open"].iloc[i]), float(df["close"].iloc[i])
+                    hi, lo = float(df["high"].iloc[i]), float(df["low"].iloc[i])
+                    if require_bull and c <= o:
+                        continue
+                    if min_close_pos is not None:
+                        pos = (c - lo) / (hi - lo) if hi > lo else 0.5
+                        if pos < min_close_pos:
+                            continue
+                kept.append((i, sd))
+            sig = kept
         ti, ts = d["ti"], d["ts"]
         hs = 0
         for i, sd in sig:

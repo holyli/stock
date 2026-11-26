@@ -22,7 +22,7 @@
 - 而 MA7/MA13 金叉要等到 **11/24 10:30**，比同花顺晚 3 根——这正是「卖点相对准、买点几乎全错」的根因：卖点（趋势破坏）用金叉口径只是滞后，买点（底部转折）用金叉口径则系统性错过。
 - 另外用固定 `rho` 反推也走不通：要命中 11/23 得令 `rho≈0.9739`，但那样全月只剩 2 个信号，与截图十余个买卖点明显不符，故排除。
 
-**落地**：`signal_mode: ma7`（收盘上穿 MA7 标买、下穿标卖，柱色=是否站上 MA7），目前只对 `m60` 生效，日线仍用 `cross` 口径等日线截图复核。
+**落地**：`signal_mode: ma7`（收盘上穿 MA7 标买、下穿标卖，柱色=是否站上 MA7），`m60` 与日线都走这个口径（`signal_mode_by_period` 可分别覆盖）。
 
 **买点提前量**（2026-11-25 追加）：严格「等收盘站上 MA7」在急跌后要 2~6 根才成立，买点明显滞后。加 `ma7_lead_pct` 后，买点改为「收盘回到 MA7 下方 1% 以内即标买」，柱色与卖点仍按严格口径不变。实测（各 60 根，相对近 6 根最低点）：
 
@@ -84,19 +84,63 @@ $PY main.py --backtest --code 300750 --period m60   # 导出指标 CSV 供截图
 
 回测 CSV 默认写到 `data/backtest_<代码>_<周期>.csv`，含 `time,close,ma7,ma13,fast,slow,ratio,above,cross_up,cross_down,hold,state,buy,sell`，并在终端列出复刻的买卖点。注意：分钟线数据源只提供近 1 个月左右（westock 约 60 根），长周期需另找数据源。
 
-## 4. 定时（macOS launchd）
+## 4. 定时
+
+> **⚠️ 已弃用 launchd 方案**（2026-11-26）。现在定时由 WorkBuddy automation 驱动：
+> 60 分钟跑 10:33 / 11:33 / 14:03 / 16:35，日线跑 18:30。
+> 下面保留的是旧的 launchd 配置，**不要执行**——它未加载，且与 automation 会重复扫描。
+
+### 4.1 旧方案（launchd，已弃用）
+
+一键安装（会生成 4 个任务，并执行 `pmset` 设置唤醒——这一步需要输一次管理员密码）：
 
 ```bash
-sed -e 's|__PROJECT_DIR__|/Users/holyli/stock/wave-monitor|g' \
-    -e 's|__PYTHON__|/Users/holyli/stock/wave-monitor/.venv/bin/python|g' \
-    /Users/holyli/stock/wave-monitor/com.wave-monitor.plist.template \
-    > ~/Library/LaunchAgents/com.wave-monitor.plist
-launchctl load ~/Library/LaunchAgents/com.wave-monitor.plist
+cd /Users/holyli/stock/wave-monitor && bash install.sh
 ```
 
-触发时点（周一至周五）：**10:33 / 11:33 / 14:03 / 15:05** 扫 60 分钟，**15:10** 判日线。launchd 不继承 shell PATH，模板中 Python 与脚本都是绝对路径；密钥由脚本从 `~/.env` 读取，不写进 plist。
+装四个任务：
 
-卸载：`launchctl unload ~/Library/LaunchAgents/com.wave-monitor.plist`
+| 任务 | 时点（周一至周五） | 作用 |
+| --- | --- | --- |
+| `com.wave-monitor` | 10:33 / 11:33 / 14:03 / 15:05 / 15:10 | **只跑 60 分钟**买卖点（`--period m60`） |
+| `com.wave-monitor.daily` | 18:30 | **只跑日线**买卖点（`--period daily`） |
+| `com.wave-monitor.awake` | 09:25 | 交易日启动 `caffeinate` 保活到 15:15；非交易日直接退出 |
+| `com.wave-monitor.awake.pm` | 18:25 | 交易日钉醒 15 分钟（到 18:40），保证 18:30 那轮能跑 |
+
+**两个周期彻底分离**（2026-11-26）：60 分钟轮次只取 m60 行情，日线轮次只取 daily 行情，互不代取。原「日线确认标签」（`periods.use_as_confirm`）已删除——它会让每轮 60 分钟扫描额外拉一遍日线，请求量翻倍且把日线信号混进 60 分钟消息里。日志里每轮都会打印 `本轮扫描周期：60分钟（只取该周期行情）` 便于核对。
+
+**交易日语义**：A 股或港股**任一开市**就扫（`is_any_trading_day`），两个市场都休市才跳过（周末由 launchd 的 `Weekday` 挡掉，节假日由代码挡掉）。港股日历取恒指日线的日期集合（`hk_trade_dates`，缓存 12 小时）；取不到时退化为只看 A 股，不阻断扫描。所以像 7/1（A 股开、港股休）或 10/02（A 股休、港股开）都会正常跑。
+
+**睡眠也能跑**：`pmset repeat wakeorpoweron MTWRF 09:25:00` 让机器在开盘前自己唤醒，随后 `wake_guard.sh` 确认是交易日后把机器钉醒到 15:15；18:25 再钉 15 分钟覆盖日线轮次。限制：笔记本合盖时唤不醒（唤醒后 launchd 会补跑当天错过的日线任务）；必须是已登录会话（停在登录界面不会跑，可开「自动登录」规避）。
+
+launchd 不继承 shell PATH，模板里 Python 与脚本都是绝对路径；密钥由脚本从 `~/.env` 读取，不写进 plist。
+
+手动触发一轮：
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.wave-monitor         # 60 分钟
+launchctl kickstart -k gui/$(id -u)/com.wave-monitor.daily   # 日线
+```
+
+**市场差异**：60 分钟收线时点按市场区分——A 股 4 根/日（10:30/11:30/14:00/15:00），港股 7 根/日（多 12:00/13:00/16:00）。港股 16:00 收线那根由 15:10 之后的下一轮（次日 10:33 之前无扫描，故港股尾盘那根在 15:10 轮次按未收线跳过）；日线数据稳定时间 A 股 15:05、港股 16:05，18:30 的日线轮次对两个市场都已收盘，能取到当日完整日线。
+
+**量能倍数**（2026-11-25 加）：推送里除了换手率，还带「量能 N 倍·放量/温和放量/平量/缩量」——当根换手 ÷ 前 20 根换手中位数。六序列量化显示 ≥2.5 倍的买点命中率 75~83%，1.0~2.5 倍仅 45~47%，但**没有设成硬门**（会把 60 分钟信号砍半、日线只剩个位数样本），只做标注由人判断。
+
+**增量缓存**（2026-11-25 加，借鉴 chan-trading-decision 的做法）：历史 K 线落 `data/kline_cache/{code}_{period}.csv`，每次只向 westock 要「上次日期 − 回看天数」的增量（日线 12 天、m60 6 天），合并后回写。首次部署或新增标的先跑 `python3 warm_cache.py` 预热（现在也是批量一条命令，中断后重跑会自动跳过已完成的标的）。
+
+**限频的真实机制**（2026-11-26 修正）：westock 本身没有配额，它是 Go CLI，直接连腾讯行情和东财接口；**限频来自上游服务端按 IP + 接口做的滑动窗口与并发频控**。所以真正触发限频的是我们自己的调用方式：逐只票拆开查、反复试探、拉全市场、缓存没用上、多进程并发、盘中高频刷新。间隔调大只是缓解，真正的解法是**降请求数**：
+
+- **批量**：`westock kline a,b,c` 多代码逗号拼接（kline / finance / technical / fund flow / report 都支持，只有 search 必须单条）。17 只标的从 17 次请求降到 **1 次**；实现见 `fetcher.fetch_batch`，`batch_size` 默认 20。
+- **不试探**：代码固定取 `config.yaml` 的标的池，不做 search 盲试。
+- **缓存**：缓存已覆盖「本应已收线」的最后一根时**直接不发请求**（`kline_cache.is_fresh` + `utils.expected_last_bar`）。m60 按 10:30/11:30/14:00/15:00（港股多 12:00/13:00/16:00）判断，日线收盘后取一次当天不再取。上一轮刚跑完紧接着再跑，实测 **0 请求**。
+- **不并发**：`scan_lock.ScanLock` 用 flock 保证同一时刻只有一个扫描进程；后到的进程先等前一轮结束（`general.lock_wait_seconds`，默认 300 秒）再继续，避免两个进程把同一分钟窗口顶穿。
+- 另外**未收盘的当根不再写入缓存**——上游会把正在形成的当根一起返回，存进去会让「缓存已最新」的判断出现误差，也让信号用到半根数据。
+
+**限流保护**：批量后每轮通常只有 1~2 次请求，仍保留兜底——① **westock 服务限频**（`code=1620053006`）一旦出现，本轮剩余请求全部改用本地缓存，不重试；② **东财 push2 限流**一旦出现，本轮不再走 akshare/东财降级通道。两者都只影响本轮。
+
+**看板**：每次扫描结束会往 `logs/scan_history.jsonl` 追加一条记录，并重渲染 `output/扫描看板.html`。按日期分组、**逐轮一行**：每行显示该轮的买卖点（无则「—」）和数量分布「无信号 / 数据滞后 / 取数失败 / 限频跳过」，四类之和等于该轮标的数；有轮次受限频影响时在日期行右侧标出。页面每 2 分钟自动刷新，手工重建：`.venv/bin/python scan_log.py`。
+
+卸载：`launchctl bootout gui/$(id -u)/com.wave-monitor`（另一支同理）
 
 ## 5. 调参流程
 
@@ -109,8 +153,8 @@ launchctl load ~/Library/LaunchAgents/com.wave-monitor.plist
 
 ## 6. 运行机制与风险
 
-- 每次扫描：交易日判断 → 逐标的逐周期拉数（westock 优先，失败降级 akshare / 东财 push2his；识别到 push2 限流立即停重试）→ 闭合校验（丢弃盘中未收盘 K 线）→ 算信号 → 按 `标的|周期|K线时间` 去重 → 企微 markdown 推送（限 15 条/分钟）→ 原子写状态。
-- 日线状态作为 60 分钟消息的二次确认标签，不改变买卖点判定。
+- 每次扫描：A股/港股交易日判断（任一开市即扫）→ 按周期**批量取数**（一个周期一条 westock 命令，缓存已覆盖最新收线的标的直接 0 请求）→ 闭合校验（丢弃盘中未收盘 K 线）→ 算信号 → 按 `标的|周期|K线时间` 去重 → 企微 markdown 推送（限 15 条/分钟）→ 原子写状态。同一时刻只允许一个扫描进程（flock）。
+- 日线与 60 分钟**彻底分离**：一次扫描只取本轮周期的行情，日线信号只出现在 18:30 那轮，60 分钟信号只出现在盘中 5 个时点，互不代取、互不混推。
 - 免费行情接口可能变字段或限频；已做版本锁定、列名适配层、双通道降级与失败告警。
 - 均线金叉死叉本质滞后，收线后才确认；信号仅供参考，市场有风险，决策需独立判断。
 
@@ -122,5 +166,7 @@ launchctl load ~/Library/LaunchAgents/com.wave-monitor.plist
 | `indicator.py` / `fetcher.py` / `notifier.py` | 纯指标计算 / 双通道行情 / 企微推送 |
 | `state_store.py` / `utils.py` | 去重写状态 / 配置日志交易日历闭合校验 |
 | `config.yaml` / `config.example.yaml` / `.env.example` | 实际配置 / 模板 / 密钥示例 |
-| `com.wave-monitor.plist.template` | launchd 模板 |
+| `com.wave-monitor.plist.template` / `com.wave-monitor.daily.plist.template` | launchd 模板（60 分钟扫描 / 日线 18:30 扫描） |
+| `com.wave-monitor.awake.plist.template` / `com.wave-monitor.awake.pm.plist.template` | launchd 模板（盘中 09:25 保活 / 傍晚 18:25 保活） |
+| `install.sh` / `wake_guard.sh` | 一键安装 / 交易日守卫（非交易日不保活） |
 | `tests/test_indicator.py` | 合成数据单测 |

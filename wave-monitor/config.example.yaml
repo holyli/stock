@@ -32,13 +32,13 @@ indicator:
     turnover_threshold_daily: 0.5  # 日线标定值（%）
 
 periods:
+  # 两个周期彻底分离：60 分钟按盘中时点跑，日线 18:30 单独跑一次，互不代取行情
   m60:
     enabled: true
     push: true
   daily:
     enabled: true
     push: true
-  use_as_confirm: true      # 60 分钟消息附带日线 BUY/SELL/无 的二次确认标签
 
 dedup:
   merge_cross_period: false # false = 60 分钟与日线分别推送，不去重合并

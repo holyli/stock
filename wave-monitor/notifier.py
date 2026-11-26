@@ -9,7 +9,7 @@ from typing import Any
 
 import requests
 
-from utils import load_secret
+from utils import load_secret, volume_tier
 
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
 PERIOD_LABELS = {"m60": "60分钟", "daily": "日线"}
@@ -45,7 +45,20 @@ class Notifier:
         return self._post(format_signal(payload))
 
     def send_alert(self, lines: list[str]) -> bool:
-        content = "## 波段助手 · 运行告警\n" + "\n".join(f"> {line}" for line in lines[:20])
+        # 企微 markdown 上限 4096 字符（errcode=40058），超了整条消息会被丢弃
+        body = "\n".join(f"> {line}" for line in lines[:20])
+        content = "## 波段助手 · 运行告警\n" + body
+        if len(content) > 3000:
+            keep = []
+            used = 0
+            for line in lines:
+                seg = f"> {line}\n"
+                if used + len(seg) > 2600:
+                    break
+                keep.append(seg)
+                used += len(seg)
+            content = ("## 波段助手 · 运行告警\n" + "".join(keep)
+                       + f"> …共 {len(lines)} 项失败，此处只列前 {len(keep)} 项")
         return self._post(content)
 
     def _post(self, content: str) -> bool:
@@ -93,8 +106,15 @@ def format_signal(p: dict[str, Any]) -> str:
     title = SIGNAL_LABELS.get(signal, "无信号")
     period = PERIOD_LABELS.get(p.get("period"), str(p.get("period")))
     hold = "黄柱·持有" if p.get("hold") else "蓝柱·观望"
-    confirm = p.get("daily_confirm") or "日线：未取到"
+    # 日线与 60 分钟已彻底分离：只有 payload 显式带了确认标签才显示这一行
+    confirm = str(p.get("daily_confirm") or "").strip()
     turnover = fmt(p.get("turnover"), "%")
+    # 量能倍数：实测 ≥2.5 倍的买点命中率 75~83%，1.0~2.5 倍只有 45~47%
+    rel = p.get("turnover_rel")
+    vol = ""
+    if isinstance(rel, (int, float)) and rel > 0:
+        tier, tone = volume_tier(float(rel))
+        vol = f'；量能 <font color="{tone}">{float(rel):.1f} 倍·{tier}</font>'
 
     if p.get("signal_mode") == "ma7":
         try:
@@ -122,8 +142,11 @@ def format_signal(p: dict[str, Any]) -> str:
         f"> 触发时间：{p.get('time', '—')}（收盘后确认）",
         f"> 触发价：{fmt(p.get('close'))} 元",
         ma_line,
-        f"> 换手率：{turnover}；状态：{hold}",
-        f"> {confirm}",
+        f"> 换手率：{turnover}{vol}；状态：{hold}",
+    ]
+    if confirm:
+        lines.append(f"> {confirm}")
+    lines += [
         f"> 数据源：{p.get('source', '—')}",
         "<font color=\"comment\">指标为系数可调的复刻版本，仅供技术指标参考，不构成投资建议。</font>",
     ]

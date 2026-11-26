@@ -9,10 +9,13 @@
         <string>__PYTHON__</string>
         <string>__PROJECT_DIR__/main.py</string>
         <string>--once</string>
+        <string>--period</string>
+        <string>m60</string>
     </array>
     <key>WorkingDirectory</key>
     <string>__PROJECT_DIR__</string>
-    <!-- 60 分钟收线时点 10:30/11:30/14:00/15:00 后延迟；15:10 判日线 -->
+    <!-- 只跑 60 分钟：收线时点 10:30/11:30/14:00/15:00 后延迟扫描，不取日线。
+         日线买卖点由 com.wave-monitor.daily 在每个交易日 18:30 单独跑一次。 -->
     <key>StartCalendarInterval</key>
     <array>
         <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>33</integer></dict>
