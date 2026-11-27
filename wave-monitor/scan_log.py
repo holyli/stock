@@ -2,7 +2,8 @@
 
 每次 main.py 扫描结束追加一条 JSONL 到 logs/scan_history.jsonl，并重新渲染
 output/扫描看板.html。看板按日期分组、**逐轮记录**：每轮一行，显示该轮的
-买卖点与「无信号 / 数据滞后 / 限频跳过」的数量分布。
+买卖点与「无信号 / 数据滞后 / 限频跳过」的数量分布。日期与日内轮次均按时间倒序，
+最新一轮排在最上面。
 """
 
 from __future__ import annotations
@@ -151,7 +152,7 @@ def render_board() -> Path:
 
     blocks = []
     for d in sorted(by_date, reverse=True):
-        runs = sorted(by_date[d], key=lambda x: x.get("ts", ""))
+        runs = sorted(by_date[d], key=lambda x: x.get("ts", ""), reverse=True)
         hits_day = sum(1 for r in runs for i in (r.get("items") or []) if i.get("signal"))
         lim_runs = sum(1 for r in runs if _counts(r.get("items") or [])["lim"] > 0)
 
